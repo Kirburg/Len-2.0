@@ -5,10 +5,10 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 
-TOKEN = os.getenv("TOKEN")
-WEBHOOK_BASE = os.getenv("WEBHOOK_BASE")
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"{WEBHOOK_BASE}{WEBHOOK_PATH}"
+TOKEN = os.getenv("BOT_TOKEN")
+REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+WEBHOOK_BASE = os.getenv("WEBHOOK_URL")
 
 bot = Bot(
     token=TOKEN,
