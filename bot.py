@@ -1,47 +1,34 @@
-import os
-import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
+import os
 
 TOKEN = os.getenv("BOT_TOKEN")
-REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID"))
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
 WEBHOOK_BASE = os.getenv("WEBHOOK_URL")
-
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{WEBHOOK_BASE}{WEBHOOK_PATH}"
 
-bot = Bot(
-    token=TOKEN,
-    default=DefaultBotProperties(parse_mode="HTML")
-)
-
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# ===== ТЕСТОВЫЙ ХЕНДЛЕР =====
+# ===== Хендлеры =====
 @dp.message()
 async def echo(msg):
     await msg.answer("Бот жив 🟢")
 
-# ===== STARTUP =====
+# ===== Startup / Shutdown =====
 async def on_startup(bot: Bot):
     print("=== BOT COLD START ===")
     await bot.set_webhook(WEBHOOK_URL)
 
-# ===== SHUTDOWN =====
 async def on_shutdown(bot: Bot):
     await bot.delete_webhook()
 
+# ===== Основное приложение =====
 async def main():
     app = web.Application()
-
-    SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot
-    ).register(app, path=WEBHOOK_PATH)
-
+    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
 
     dp.startup.register(on_startup)
