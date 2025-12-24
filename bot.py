@@ -10,6 +10,9 @@ REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 WEBHOOK_BASE = os.getenv("WEBHOOK_URL")
 
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = f"{WEBHOOK_BASE}{WEBHOOK_PATH}"
+
 bot = Bot(
     token=TOKEN,
     default=DefaultBotProperties(parse_mode="HTML")
