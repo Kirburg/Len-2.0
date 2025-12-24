@@ -27,6 +27,7 @@ async def echo(msg):
 
 # ===== STARTUP =====
 async def on_startup(bot: Bot):
+    print("=== BOT COLD START ===")
     await bot.set_webhook(WEBHOOK_URL)
 
 # ===== SHUTDOWN =====
