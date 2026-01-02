@@ -37,13 +37,13 @@ def shift_kb():
 def type_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="➕ ДОП", callback_data="type_dop"),
-        InlineKeyboardButton(text="👀 ВИ", callback_data="type_vi")
+        InlineKeyboardButton(text="👀 ВИ", callback_data="type_vi"),
     ]])
 
 def dop_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Всё ок", callback_data="dop_ok"),
-        InlineKeyboardButton(text="⚠️ Внимание", callback_data="dop_warn")
+        InlineKeyboardButton(text="⚠️ Внимание", callback_data="dop_warn"),
     ]])
 
 # ====== HELPERS ======
@@ -53,7 +53,15 @@ def mention_user(user):
 def mention_admin():
     return f'<a href="tg://user?id={ADMIN_ID}">руководитель</a>'
 
-async def delete_later(chat_id: int, message_id: int, delay: int = 60):
+async def allow_click(state: FSMContext, cooldown=1.5):
+    data = await state.get_data()
+    now = time.time()
+    if now - data.get("last_click", 0) < cooldown:
+        return False
+    await state.update_data(last_click=now)
+    return True
+
+async def delete_later(chat_id: int, message_id: int, delay=60):
     await asyncio.sleep(delay)
     try:
         await bot.delete_message(chat_id, message_id)
@@ -61,53 +69,65 @@ async def delete_later(chat_id: int, message_id: int, delay: int = 60):
         pass
 
 # ====== START ======
-@dp.message(F.text.regexp(r"^/start(@\w+)?$"))
+@dp.message(F.text.startswith("/start"))
 async def start(msg: Message, state: FSMContext):
     try:
         await msg.delete()
     except:
         pass
-    await state.clear()
+
     sent = await msg.answer("Выбирай смену:", reply_markup=shift_kb())
-    asyncio.create_task(delete_later(sent.chat.id, sent.message_id, delay=60))
+    asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
+    await state.clear()
 
 # ====== SHIFT ======
 @dp.callback_query(F.data.startswith("shift_"))
 async def choose_shift(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
+    if not await allow_click(state):
+        return
+
     shift = cb.data.split("_", 1)[1]
-    await state.set_state(ReportFSM.shift)
     await state.update_data(shift=shift)
 
-    sent = await cb.message.answer(f"Смена {shift}. Что дальше?", reply_markup=type_kb())
-    asyncio.create_task(delete_later(sent.chat.id, sent.message_id, delay=60))
-    await cb.message.delete()
+    msg = await cb.message.edit_text(
+        f"Смена {shift}. Что дальше?",
+        reply_markup=type_kb()
+    )
+    asyncio.create_task(delete_later(msg.chat.id, msg.message_id))
 
 # ====== TYPE ======
 @dp.callback_query(F.data == "type_dop")
 async def type_dop(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.set_state(ReportFSM.type)
-    sent = await cb.message.answer("ДОП статус:", reply_markup=dop_kb())
-    asyncio.create_task(delete_later(sent.chat.id, sent.message_id, delay=60))
-    await cb.message.delete()
+    if not await allow_click(state):
+        return
+
+    msg = await cb.message.edit_text("ДОП статус:", reply_markup=dop_kb())
+    asyncio.create_task(delete_later(msg.chat.id, msg.message_id))
 
 @dp.callback_query(F.data == "type_vi")
 async def type_vi(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
+    if not await allow_click(state):
+        return
+
     await state.update_data(type="vi")
     await state.set_state(ReportFSM.text)
-    await cb.message.edit_text("Напиши саммари ВИ:")
-    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id, delay=60))
+    await cb.message.delete()
 
 # ====== ДОП OK ======
 @dp.callback_query(F.data == "dop_ok")
 async def dop_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
+    if not await allow_click(state):
+        return
+
     data = await state.get_data()
     shift = data["shift"]
     date = datetime.now().strftime("%d.%m.%Y")
     user = mention_user(cb.from_user)
+
     header = "Эпизоды\\Jira" if shift in ("11-23", "20-08") else "Эпизоды"
 
     text = (
@@ -125,10 +145,12 @@ async def dop_ok(cb: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "dop_warn")
 async def dop_warn(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
+    if not await allow_click(state):
+        return
+
     await state.update_data(type="dop_warn")
     await state.set_state(ReportFSM.text)
-    await cb.message.edit_text("Напиши, на кого обратить внимание:")
-    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id, delay=60))
+    await cb.message.delete()
 
 # ====== TEXT INPUT ======
 @dp.message(ReportFSM.text)
@@ -137,9 +159,9 @@ async def input_text(msg: Message, state: FSMContext):
     shift = data["shift"]
     date = datetime.now().strftime("%d.%m.%Y")
     user = mention_user(msg.from_user)
-    header = "Эпизоды\\Jira" if shift in ("11-23", "20-08") else "Эпизоды"
 
-    if data.get("type") == "dop_warn":
+    if data["type"] == "dop_warn":
+        header = "Эпизоды\\Jira" if shift in ("11-23", "20-08") else "Эпизоды"
         text = (
             "⚠️\n"
             f"{header} [{date}]\n"
