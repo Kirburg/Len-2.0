@@ -162,7 +162,7 @@ async def restart(msg: Message):
         await msg.delete()
     except:
         pass
-    sent = await msg.answer("♻️ Перезапуск бота…")  # Убрали delete_after
+    sent = await msg.answer("♻️ Перезапуск бота")  # Убрали delete_after
     asyncio.create_task(delete_later(sent.chat.id, sent.message_id, delay=1))  # Отложенное удаление через 1 сек
     os._exit(1)  # Форсированный рестарт
 
