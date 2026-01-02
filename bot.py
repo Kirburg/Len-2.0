@@ -30,7 +30,7 @@ class ReportFSM(StatesGroup):
 # ====== KEYBOARDS ======
 def shift_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=s, callback_data=f"shift_{s}")] 
+        [InlineKeyboardButton(text=s, callback_data=f"shift_{s}")]
         for s in ["8-20", "11-23", "14-02", "20-08"]
     ])
 
@@ -75,9 +75,6 @@ async def start(msg: Message, state: FSMContext):
 @dp.callback_query(F.data.startswith("shift_"))
 async def choose_shift(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    if await state.get_state() is not None:
-        return
-
     shift = cb.data.split("_", 1)[1]
     await state.set_state(ReportFSM.shift)
     await state.update_data(shift=shift)
