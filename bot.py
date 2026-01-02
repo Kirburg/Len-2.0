@@ -1,5 +1,6 @@
 import os
 import asyncio
+import time
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
@@ -8,17 +9,18 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.bot import DefaultBotProperties
-from aiohttp import web
 
 # ====== ENV ======
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
 REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID"))
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# ====== BOT & DISPATCHER ======
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+# ====== INIT ======
+bot = Bot(
+    token=TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
+
 dp = Dispatcher(storage=MemoryStorage())
 
 # ====== FSM ======
@@ -189,20 +191,14 @@ async def restart(msg: Message):
         await msg.delete()
     except:
         pass
-    await msg.answer("♻️ Перезапуск бота…", delete_after=1)
-    raise RuntimeError("Manual restart")
 
-# ====== WEBHOOK HANDLER ======
-async def handle_webhook(request: web.Request):
-    data = await request.json()
-    await dp.feed_raw_update(bot, data)
-    return web.Response()
+    await msg.answer("♻️ Перезапуск…", delete_after=2)
+    await asyncio.sleep(0.3)
+    os._exit(1)
 
-# ====== RUN WEBHOOK ======
+# ====== RUN ======
 async def main():
-    app = web.Application()
-    app.router.add_post(WEBHOOK_PATH, handle_webhook)
-    return app
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    web.run_app(main(), port=int(os.getenv("PORT", 8080)))
+    asyncio.run(main())
