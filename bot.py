@@ -67,7 +67,6 @@ async def start(msg: Message, state: FSMContext):
         await msg.delete()
     except:
         pass
-    # Сразу меню смен
     sent = await msg.answer("Выбирай смену:", reply_markup=shift_kb())
     asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
 
@@ -82,10 +81,8 @@ async def choose_shift(cb: CallbackQuery, state: FSMContext):
     await state.set_state(ReportFSM.shift)
     await state.update_data(shift=shift)
 
-    # новое меню с типом
     sent = await cb.message.answer(f"Смена {shift}. Что дальше?", reply_markup=type_kb())
     asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
-    # старое сообщение удаляем через 1 сек
     asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id, delay=1))
 
 # ====== TYPE ======
@@ -173,21 +170,9 @@ async def restart(msg: Message):
     except:
         pass
     await msg.answer("♻️ Перезапуск бота…", delete_after=1)
-    # на Railway перезапуск контейнера вызывается RuntimeError
     raise RuntimeError("Manual restart")
 
 # ====== WEBHOOK ======
-async def on_startup(bot: Bot):
-    print("=== BOT COLD START ===")
-    await bot.set_webhook(WEBHOOK_URL)
-    try:
-        await bot.send_message(REPORT_CHAT_ID, "🟢 Бот запущен / cold start")
-    except:
-        pass
-
-async def on_shutdown(bot: Bot):
-    await bot.session.close()
-
 async def handle_webhook(request: web.Request):
     data = await request.json()
     await dp.feed_raw_update(bot, data)
@@ -195,10 +180,8 @@ async def handle_webhook(request: web.Request):
 
 # ====== RUN ======
 async def main():
-    await on_startup(bot)
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
-    app.on_shutdown.append(lambda app: on_shutdown(bot))
     return app
 
 if __name__ == "__main__":
