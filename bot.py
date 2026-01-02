@@ -17,7 +17,7 @@ REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_PATH = "/webhook"
 
-# ====== BOT ======
+# ====== BOT & DISPATCHER ======
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher(storage=MemoryStorage())
 
@@ -61,12 +61,13 @@ async def delete_later(chat_id: int, message_id: int, delay: int = 60):
         pass
 
 # ====== START ======
-@dp.message(F.text.startswith("/start"))
+@dp.message(F.text.regexp(r"^/start(@\w+)?$"))
 async def start(msg: Message, state: FSMContext):
     try:
         await msg.delete()
     except:
         pass
+    await state.clear()
     sent = await msg.answer("Выбирай смену:", reply_markup=shift_kb())
     asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
 
@@ -74,6 +75,7 @@ async def start(msg: Message, state: FSMContext):
 @dp.callback_query(F.data.startswith("shift_"))
 async def choose_shift(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
+    # Защита от повторных кликов
     if await state.get_state() is not None:
         return
 
@@ -83,6 +85,7 @@ async def choose_shift(cb: CallbackQuery, state: FSMContext):
 
     sent = await cb.message.answer(f"Смена {shift}. Что дальше?", reply_markup=type_kb())
     asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
+    # Удаляем старое меню
     asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id, delay=1))
 
 # ====== TYPE ======
@@ -132,7 +135,7 @@ async def dop_warn(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_text("Напиши, на кого обратить внимание:")
     asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
 
-# ====== TEXT ======
+# ====== TEXT INPUT ======
 @dp.message(ReportFSM.text)
 async def input_text(msg: Message, state: FSMContext):
     data = await state.get_data()
@@ -172,13 +175,13 @@ async def restart(msg: Message):
     await msg.answer("♻️ Перезапуск бота…", delete_after=1)
     raise RuntimeError("Manual restart")
 
-# ====== WEBHOOK ======
+# ====== WEBHOOK HANDLER ======
 async def handle_webhook(request: web.Request):
     data = await request.json()
     await dp.feed_raw_update(bot, data)
     return web.Response()
 
-# ====== RUN ======
+# ====== RUN WEBHOOK ======
 async def main():
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
