@@ -1,230 +1,224 @@
 import os
 import asyncio
-from datetime import datetime
+import logging
+from time import time
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message,
-    InlineKeyboardButton,
+    CallbackQuery,
     InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.client.bot import DefaultBotProperties
 
-# ====== ENV ======
-TOKEN = os.getenv("BOT_TOKEN")
-REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID"))
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+from aiohttp import web
 
-# ====== INIT ======
-bot = Bot(
-    token=TOKEN,
-    default=DefaultBotProperties(parse_mode="HTML"),
-)
+# ==========================
+# CONFIG
+# ==========================
 
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL") + WEBHOOK_PATH
+
+MENU_TTL = 60          # жизнь меню
+CLICK_COOLDOWN = 1.5   # антиспам кликов (сек)
+
+logging.basicConfig(level=logging.INFO)
+
+bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ====== FSM ======
-class ReportFSM(StatesGroup):
-    shift = State()
-    text = State()
+# ==========================
+# FSM
+# ==========================
 
-# ====== KEYBOARDS ======
-def shift_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=s, callback_data=f"shift_{s}")]
-        for s in ["8-20", "11-23", "14-02", "20-08"]
-    ])
+class MenuFSM(StatesGroup):
+    choosing_shift = State()
+    choosing_type = State()
 
-def type_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="➕ ДОП", callback_data="type_dop"),
-        InlineKeyboardButton(text="👀 ВИ", callback_data="type_vi"),
-    ]])
+# ==========================
+# UTILS
+# ==========================
 
-def dop_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Всё ок", callback_data="dop_ok"),
-        InlineKeyboardButton(text="⚠️ Внимание", callback_data="dop_warn"),
-    ]])
-
-# ====== HELPERS ======
-def mention_user(user):
-    return f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
-
-def mention_admin():
-    return f'<a href="tg://user?id={ADMIN_ID}">руководитель</a>'
-
-def header_by_shift(shift: str) -> str:
-    return "Эпизоды\\Jira" if shift in ("11-23", "20-08") else "Эпизоды"
-
-async def auto_delete(chat_id: int, msg_id: int, delay: int = 60):
-    await asyncio.sleep(delay)
+async def auto_delete(chat_id: int, msg_id: int, ttl: int):
+    await asyncio.sleep(ttl)
     try:
         await bot.delete_message(chat_id, msg_id)
     except:
         pass
 
-async def delete_old_menu(state: FSMContext, chat_id: int):
+
+async def drop_old_menu(state: FSMContext):
     data = await state.get_data()
     old_id = data.get("menu_msg_id")
-    if old_id:
+    chat_id = data.get("chat_id")
+
+    if old_id and chat_id:
         try:
             await bot.delete_message(chat_id, old_id)
         except:
             pass
 
-# ====== START ======
+
+def now():
+    return time()
+
+# ==========================
+# KEYBOARDS
+# ==========================
+
+def shift_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Смена 11", callback_data="shift_11")],
+        [InlineKeyboardButton(text="Смена 20", callback_data="shift_20")],
+    ])
+
+
+def type_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Jira", callback_data="type_jira")],
+        [InlineKeyboardButton(text="CI", callback_data="type_ci")],
+    ])
+
+# ==========================
+# START
+# ==========================
+
 @dp.message(Command("start"))
 async def start(msg: Message, state: FSMContext):
-    try:
-        await msg.delete()
-    except:
-        pass
-
-    await delete_old_menu(state, msg.chat.id)
+    await drop_old_menu(state)
     await state.clear()
 
-    menu = await msg.answer("Выбирай смену:", reply_markup=shift_kb())
-    await state.update_data(menu_msg_id=menu.message_id)
-
-    asyncio.create_task(
-        auto_delete(menu.chat.id, menu.message_id, 60)
+    menu = await bot.send_message(
+        msg.chat.id,
+        "Напиши, на кого обратить внимание:",
+        reply_markup=shift_kb()
     )
 
-# ====== SHIFT ======
-@dp.callback_query(F.data.startswith("shift_"))
-async def choose_shift(cb, state: FSMContext):
-    await cb.answer()
+    await state.set_state(MenuFSM.choosing_shift)
+    await state.update_data(
+        menu_msg_id=menu.message_id,
+        chat_id=menu.chat.id,
+        last_click=0
+    )
 
-    if await state.get_state() is not None:
+    asyncio.create_task(auto_delete(menu.chat.id, menu.message_id, MENU_TTL))
+
+# ==========================
+# SHIFT
+# ==========================
+
+@dp.callback_query(F.data.startswith("shift_"))
+async def choose_shift(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()  # ВАЖНО
+
+    data = await state.get_data()
+
+    # антиспам
+    if now() - data.get("last_click", 0) < CLICK_COOLDOWN:
         return
 
-    shift = cb.data.split("_", 1)[1]
-    await state.update_data(shift=shift)
+    shift = cb.data.split("_")[1]
 
-    await delete_old_menu(state, cb.message.chat.id)
+    # Jira только для 11 и 20
+    if shift not in ("11", "20"):
+        await cb.answer("Недоступно", show_alert=True)
+        return
 
-    msg = await cb.message.edit_text(
-        f"Смена {shift}. Что дальше?",
+    await drop_old_menu(state)
+
+    msg = await bot.send_message(
+        cb.message.chat.id,
+        f"Смена {shift}. Выбери тип:",
         reply_markup=type_kb()
     )
 
-    await state.update_data(menu_msg_id=msg.message_id)
-    asyncio.create_task(
-        auto_delete(msg.chat.id, msg.message_id, 60)
+    await state.set_state(MenuFSM.choosing_type)
+    await state.update_data(
+        menu_msg_id=msg.message_id,
+        chat_id=msg.chat.id,
+        shift=shift,
+        last_click=now()
     )
 
-# ====== TYPE ======
-@dp.callback_query(F.data == "type_dop")
-async def type_dop(cb, state: FSMContext):
+    asyncio.create_task(auto_delete(msg.chat.id, msg.message_id, MENU_TTL))
+
+# ==========================
+# TYPE
+# ==========================
+
+@dp.callback_query(F.data.startswith("type_"))
+async def choose_type(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await delete_old_menu(state, cb.message.chat.id)
 
-    msg = await cb.message.edit_text(
-        "ДОП статус:",
-        reply_markup=dop_kb()
-    )
-
-    await state.update_data(menu_msg_id=msg.message_id)
-    asyncio.create_task(
-        auto_delete(msg.chat.id, msg.message_id, 60)
-    )
-
-@dp.callback_query(F.data == "type_vi")
-async def type_vi(cb, state: FSMContext):
-    await cb.answer()
-    await delete_old_menu(state, cb.message.chat.id)
-
-    await cb.message.edit_text("Напиши саммари ВИ:")
-    await state.update_data(type="vi")
-    await state.set_state(ReportFSM.text)
-
-# ====== ДОП OK ======
-@dp.callback_query(F.data == "dop_ok")
-async def dop_ok(cb, state: FSMContext):
-    await cb.answer()
     data = await state.get_data()
 
-    shift = data["shift"]
-    header = header_by_shift(shift)
-    date = datetime.now().strftime("%d.%m.%Y")
-    user = mention_user(cb.from_user)
+    if now() - data.get("last_click", 0) < CLICK_COOLDOWN:
+        return
 
-    text = (
-        "✅\n"
-        f"{header} [{date}]\n"
-        f"{header} обработаны.\n\n"
-        f"Ответственный: {user}, смена {shift}"
+    t = cb.data.split("_")[1]
+    shift = data.get("shift")
+
+    await drop_old_menu(state)
+    await state.clear()
+
+    await bot.send_message(
+        cb.message.chat.id,
+        f"✅ Принято:\nСмена: {shift}\nТип: {t.upper()}"
     )
 
-    await bot.send_message(REPORT_CHAT_ID, text)
-    await cb.message.delete()
-    await state.clear()
+# ==========================
+# RESTART
+# ==========================
 
-# ====== ДОП WARN ======
-@dp.callback_query(F.data == "dop_warn")
-async def dop_warn(cb, state: FSMContext):
-    await cb.answer()
-    await delete_old_menu(state, cb.message.chat.id)
-
-    await cb.message.edit_text("Напиши, на кого обратить внимание:")
-    await state.update_data(type="dop_warn")
-    await state.set_state(ReportFSM.text)
-
-# ====== TEXT INPUT ======
-@dp.message(ReportFSM.text)
-async def input_text(msg: Message, state: FSMContext):
-    data = await state.get_data()
-    shift = data["shift"]
-    header = header_by_shift(shift)
-    date = datetime.now().strftime("%d.%m.%Y")
-    user = mention_user(msg.from_user)
-
-    if data["type"] == "dop_warn":
-        text = (
-            "⚠️\n"
-            f"{header} [{date}]\n"
-            f"{header} обработаны.\n"
-            f"На кого стоит обратить внимание:\n{msg.text}\n\n"
-            f"Ответственный: {user}, смена {shift}"
-        )
-    else:
-        text = (
-            "👀\n"
-            f"ВИ [{date}]\n\n"
-            f"Саммари:\n{msg.text}\n\n"
-            f"Ответственный: {user}\n"
-            f"Статус: требует внимания {mention_admin()}"
-        )
-
-    await bot.send_message(REPORT_CHAT_ID, text)
-
-    try:
-        await msg.delete()
-    except:
-        pass
-
-    await state.clear()
-
-# ====== RESTART ======
 @dp.message(Command("restart"))
-async def restart_bot(msg: Message):
+@dp.message(F.text.regexp(r"^/restart@"))
+async def restart(msg: Message):
     try:
         await msg.delete()
     except:
         pass
 
-    await msg.answer("♻️ Перезапуск бота…")
-    await asyncio.sleep(1)
-    os._exit(0)
+    await msg.answer("♻️ Перезапуск…", delete_after=3)
+    await asyncio.sleep(0.5)
 
-# ====== RUN (polling для локала / теста) ======
-async def main():
-    await dp.start_polling(bot)
+    os._exit(1)  # Railway рестарт
+
+# ==========================
+# WEBHOOK
+# ==========================
+
+async def on_startup(app):
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info("Webhook set")
+
+
+async def on_shutdown(app):
+    await bot.delete_webhook()
+    await bot.session.close()
+
+
+async def handle_webhook(request):
+    data = await request.json()
+    update = dp.feed_raw_update(bot, data)
+    await update
+    return web.Response(text="OK")
+
+
+def main():
+    app = web.Application()
+    app.router.add_post(WEBHOOK_PATH, handle_webhook)
+
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
+    web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
