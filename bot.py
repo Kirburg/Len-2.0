@@ -1,13 +1,13 @@
 import os
 import asyncio
 from datetime import datetime
-
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.bot import DefaultBotProperties
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 
 # ====== ENV ======
@@ -78,7 +78,6 @@ async def choose_shift(cb: CallbackQuery, state: FSMContext):
     shift = cb.data.split("_", 1)[1]
     await state.set_state(ReportFSM.shift)
     await state.update_data(shift=shift)
-
     sent = await cb.message.answer(f"Смена {shift}. Что дальше?", reply_markup=type_kb())
     asyncio.create_task(delete_later(sent.chat.id, sent.message_id, delay=60))
     await cb.message.delete()
@@ -109,14 +108,12 @@ async def dop_ok(cb: CallbackQuery, state: FSMContext):
     date = datetime.now().strftime("%d.%m.%Y")
     user = mention_user(cb.from_user)
     header = "Эпизоды\\Jira" if shift in ("11-23", "20-08") else "Эпизоды"
-
     text = (
         "✅\n"
         f"{header} [{date}]\n"
         f"{header} обработаны.\n\n"
         f"Ответственный: {user}, смена {shift}"
     )
-
     await bot.send_message(REPORT_CHAT_ID, text)
     await cb.message.delete()
     await state.clear()
@@ -138,7 +135,6 @@ async def input_text(msg: Message, state: FSMContext):
     date = datetime.now().strftime("%d.%m.%Y")
     user = mention_user(msg.from_user)
     header = "Эпизоды\\Jira" if shift in ("11-23", "20-08") else "Эпизоды"
-
     if data.get("type") == "dop_warn":
         text = (
             "⚠️\n"
@@ -155,7 +151,6 @@ async def input_text(msg: Message, state: FSMContext):
             f"Ответственный: {user}\n"
             f"Статус: требует внимания {mention_admin()}"
         )
-
     await bot.send_message(REPORT_CHAT_ID, text)
     await msg.delete()
     await state.clear()
@@ -170,17 +165,24 @@ async def restart(msg: Message):
     await msg.answer("♻️ Перезапуск бота…", delete_after=1)
     raise RuntimeError("Manual restart")
 
-# ====== WEBHOOK HANDLER ======
-async def handle_webhook(request: web.Request):
-    data = await request.json()
-    await dp.feed_raw_update(bot, data)
-    return web.Response()
+# ====== STARTUP для webhook ======
+async def on_startup(bot: Bot) -> None:
+    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+    await bot.set_webhook(webhook_url)
+
+dp.startup.register(on_startup)
 
 # ====== RUN WEBHOOK ======
-async def main():
-    app = web.Application()
-    app.router.add_post(WEBHOOK_PATH, handle_webhook)
-    return app
-
 if __name__ == "__main__":
-    web.run_app(main(), port=int(os.getenv("PORT", 8080)))
+    app = web.Application()
+    
+    webhook_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot
+    )
+    webhook_handler.register(app, path=WEBHOOK_PATH)
+    
+    setup_application(app, dp, bot=bot)
+    
+    port = int(os.getenv("PORT", 8080))
+    web.run_app(app, host="0.0.0.0", port=port)
