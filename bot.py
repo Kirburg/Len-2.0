@@ -162,8 +162,9 @@ async def restart(msg: Message):
         await msg.delete()
     except:
         pass
-    await msg.answer("♻️ Перезапуск бота…", delete_after=1)
-    os._exit(1)  # Форсированный выход — Railway перезапустит
+    sent = await msg.answer("♻️ Перезапуск бота…")  # Убрали delete_after
+    asyncio.create_task(delete_later(sent.chat.id, sent.message_id, delay=1))  # Отложенное удаление через 1 сек
+    os._exit(1)  # Форсированный рестарт
 
 # ====== STARTUP для webhook ======
 async def on_startup(bot: Bot) -> None:
