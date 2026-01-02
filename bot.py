@@ -14,8 +14,8 @@ from aiohttp import web
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # ====== BOT & DISPATCHER ======
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -69,13 +69,12 @@ async def start(msg: Message, state: FSMContext):
         pass
     await state.clear()
     sent = await msg.answer("Выбирай смену:", reply_markup=shift_kb())
-    asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
+    asyncio.create_task(delete_later(sent.chat.id, sent.message_id, delay=60))
 
 # ====== SHIFT ======
 @dp.callback_query(F.data.startswith("shift_"))
 async def choose_shift(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    # Защита от повторных кликов
     if await state.get_state() is not None:
         return
 
@@ -84,9 +83,8 @@ async def choose_shift(cb: CallbackQuery, state: FSMContext):
     await state.update_data(shift=shift)
 
     sent = await cb.message.answer(f"Смена {shift}. Что дальше?", reply_markup=type_kb())
-    asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
-    # Удаляем старое меню
-    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id, delay=1))
+    asyncio.create_task(delete_later(sent.chat.id, sent.message_id, delay=60))
+    await cb.message.delete()
 
 # ====== TYPE ======
 @dp.callback_query(F.data == "type_dop")
@@ -94,7 +92,7 @@ async def type_dop(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.set_state(ReportFSM.type)
     sent = await cb.message.answer("ДОП статус:", reply_markup=dop_kb())
-    asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
+    asyncio.create_task(delete_later(sent.chat.id, sent.message_id, delay=60))
     await cb.message.delete()
 
 @dp.callback_query(F.data == "type_vi")
@@ -103,7 +101,7 @@ async def type_vi(cb: CallbackQuery, state: FSMContext):
     await state.update_data(type="vi")
     await state.set_state(ReportFSM.text)
     await cb.message.edit_text("Напиши саммари ВИ:")
-    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
+    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id, delay=60))
 
 # ====== ДОП OK ======
 @dp.callback_query(F.data == "dop_ok")
@@ -133,7 +131,7 @@ async def dop_warn(cb: CallbackQuery, state: FSMContext):
     await state.update_data(type="dop_warn")
     await state.set_state(ReportFSM.text)
     await cb.message.edit_text("Напиши, на кого обратить внимание:")
-    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
+    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id, delay=60))
 
 # ====== TEXT INPUT ======
 @dp.message(ReportFSM.text)
