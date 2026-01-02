@@ -3,12 +3,7 @@ import asyncio
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    CallbackQuery,
-)
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -24,10 +19,7 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_PATH = "/webhook"
 
 # ========= BOT =========
-bot = Bot(
-    token=TOKEN,
-    default=DefaultBotProperties(parse_mode="HTML")
-)
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher(storage=MemoryStorage())
 
 # ========= FSM =========
@@ -39,20 +31,20 @@ class ReportFSM(StatesGroup):
 # ========= KEYBOARDS =========
 def shift_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=s, callback_data=f"shift_{s}")]
+        [InlineKeyboardButton(text=s, callback_data=f"shift_{s}")] 
         for s in ["8-20", "11-23", "14-02", "20-08"]
     ])
 
 def type_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="➕ ДОП", callback_data="type_dop"),
-        InlineKeyboardButton(text="👀 ВИ", callback_data="type_vi"),
+        InlineKeyboardButton(text="👀 ВИ", callback_data="type_vi")
     ]])
 
 def dop_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Всё ок", callback_data="dop_ok"),
-        InlineKeyboardButton(text="⚠️ Внимание", callback_data="dop_warn"),
+        InlineKeyboardButton(text="⚠️ Внимание", callback_data="dop_warn")
     ]])
 
 # ========= HELPERS =========
@@ -90,19 +82,16 @@ async def start(msg: Message, state: FSMContext):
 # ========= SHIFT =========
 @dp.callback_query(F.data.startswith("shift_"))
 async def choose_shift(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
+    await cb.answer()  # мгновенно подтверждаем callback
 
     if await state.get_state() is not None:
-        return
+        return  # защита от повторных кликов
 
     shift = cb.data.split("_", 1)[1]
     await state.set_state(ReportFSM.shift)
     await state.update_data(shift=shift)
 
-    await cb.message.edit_text(
-        f"Смена {shift}. Что дальше?",
-        reply_markup=type_kb()
-    )
+    await cb.message.edit_text(f"Смена {shift}. Что дальше?", reply_markup=type_kb())
     asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
 
 # ========= TYPE =========
@@ -110,23 +99,20 @@ async def choose_shift(cb: CallbackQuery, state: FSMContext):
 async def type_dop(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.set_state(ReportFSM.type)
-
     await cb.message.edit_text("ДОП статус:", reply_markup=dop_kb())
     asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
 
 @dp.callback_query(F.data == "type_vi")
 async def type_vi(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.set_state(ReportFSM.text)
     await state.update_data(type="vi")
-
+    await state.set_state(ReportFSM.text)
     await cb.message.delete()
 
 # ========= ДОП OK =========
 @dp.callback_query(F.data == "dop_ok")
 async def dop_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-
     data = await state.get_data()
     shift = data["shift"]
     date = datetime.now().strftime("%d.%m.%Y")
@@ -149,10 +135,8 @@ async def dop_ok(cb: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "dop_warn")
 async def dop_warn(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-
-    await state.set_state(ReportFSM.text)
     await state.update_data(type="dop_warn")
-
+    await state.set_state(ReportFSM.text)
     await cb.message.edit_text("Напиши, на кого обратить внимание:")
     asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
 
@@ -166,7 +150,7 @@ async def input_text(msg: Message, state: FSMContext):
 
     header = "Эпизоды\\Jira" if shift in ("11-23", "20-08") else "Эпизоды"
 
-    if data["type"] == "dop_warn":
+    if data.get("type") == "dop_warn":
         text = (
             "⚠️\n"
             f"{header} [{date}]\n"
@@ -195,9 +179,8 @@ async def restart(msg: Message):
     except:
         pass
 
-    await msg.answer("♻️ Перезапуск…", delete_after=1)
+    await msg.answer("♻️ Перезапуск бота…", delete_after=1)
     await asyncio.sleep(0.2)
-
     raise RuntimeError("Manual restart")
 
 # ========= WEBHOOK =========
@@ -205,17 +188,21 @@ async def on_startup(bot: Bot):
     print("=== BOT COLD START ===")
     await bot.set_webhook(WEBHOOK_URL)
 
+async def on_shutdown(bot: Bot):
+    print("=== BOT SHUTDOWN ===")
+    await bot.session.close()
+
 async def handle_webhook(request: web.Request):
     data = await request.json()
     await dp.feed_raw_update(bot, data)
     return web.Response()
 
+# ========= RUN =========
 async def main():
     await on_startup(bot)
-
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
-
+    app.on_shutdown.append(lambda app: on_shutdown(bot))
     return app
 
 if __name__ == "__main__":
