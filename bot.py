@@ -163,7 +163,7 @@ async def restart(msg: Message):
     except:
         pass
     await msg.answer("♻️ Перезапуск бота…", delete_after=1)
-    raise RuntimeError("Manual restart")
+    os._exit(1)  # Форсированный выход — Railway перезапустит
 
 # ====== STARTUP для webhook ======
 async def on_startup(bot: Bot) -> None:
