@@ -8,27 +8,26 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.bot import DefaultBotProperties
-
 from aiohttp import web
 
-# ========= ENV =========
+# ====== ENV ======
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 REPORT_CHAT_ID = int(os.getenv("REPORT_CHAT_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_PATH = "/webhook"
 
-# ========= BOT =========
+# ====== BOT ======
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher(storage=MemoryStorage())
 
-# ========= FSM =========
+# ====== FSM ======
 class ReportFSM(StatesGroup):
     shift = State()
     type = State()
     text = State()
 
-# ========= KEYBOARDS =========
+# ====== KEYBOARDS ======
 def shift_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=s, callback_data=f"shift_{s}")] 
@@ -47,7 +46,7 @@ def dop_kb():
         InlineKeyboardButton(text="⚠️ Внимание", callback_data="dop_warn")
     ]])
 
-# ========= HELPERS =========
+# ====== HELPERS ======
 def mention_user(user):
     return f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
 
@@ -61,55 +60,52 @@ async def delete_later(chat_id: int, message_id: int, delay: int = 60):
     except:
         pass
 
-# ========= START =========
+# ====== START ======
 @dp.message(F.text.startswith("/start"))
 async def start(msg: Message, state: FSMContext):
-    if await state.get_state() is not None:
-        try:
-            await msg.delete()
-        except:
-            pass
-        return
-
     try:
         await msg.delete()
     except:
         pass
-
+    # Сразу меню смен
     sent = await msg.answer("Выбирай смену:", reply_markup=shift_kb())
     asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
 
-# ========= SHIFT =========
+# ====== SHIFT ======
 @dp.callback_query(F.data.startswith("shift_"))
 async def choose_shift(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()  # мгновенно подтверждаем callback
-
+    await cb.answer()
     if await state.get_state() is not None:
-        return  # защита от повторных кликов
+        return
 
     shift = cb.data.split("_", 1)[1]
     await state.set_state(ReportFSM.shift)
     await state.update_data(shift=shift)
 
-    await cb.message.edit_text(f"Смена {shift}. Что дальше?", reply_markup=type_kb())
-    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
+    # новое меню с типом
+    sent = await cb.message.answer(f"Смена {shift}. Что дальше?", reply_markup=type_kb())
+    asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
+    # старое сообщение удаляем через 1 сек
+    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id, delay=1))
 
-# ========= TYPE =========
+# ====== TYPE ======
 @dp.callback_query(F.data == "type_dop")
 async def type_dop(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.set_state(ReportFSM.type)
-    await cb.message.edit_text("ДОП статус:", reply_markup=dop_kb())
-    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
+    sent = await cb.message.answer("ДОП статус:", reply_markup=dop_kb())
+    asyncio.create_task(delete_later(sent.chat.id, sent.message_id))
+    await cb.message.delete()
 
 @dp.callback_query(F.data == "type_vi")
 async def type_vi(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.update_data(type="vi")
     await state.set_state(ReportFSM.text)
-    await cb.message.delete()
+    await cb.message.edit_text("Напиши саммари ВИ:")
+    asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
 
-# ========= ДОП OK =========
+# ====== ДОП OK ======
 @dp.callback_query(F.data == "dop_ok")
 async def dop_ok(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
@@ -117,7 +113,6 @@ async def dop_ok(cb: CallbackQuery, state: FSMContext):
     shift = data["shift"]
     date = datetime.now().strftime("%d.%m.%Y")
     user = mention_user(cb.from_user)
-
     header = "Эпизоды\\Jira" if shift in ("11-23", "20-08") else "Эпизоды"
 
     text = (
@@ -131,7 +126,7 @@ async def dop_ok(cb: CallbackQuery, state: FSMContext):
     await cb.message.delete()
     await state.clear()
 
-# ========= ДОП WARN =========
+# ====== ДОП WARN ======
 @dp.callback_query(F.data == "dop_warn")
 async def dop_warn(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
@@ -140,14 +135,13 @@ async def dop_warn(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_text("Напиши, на кого обратить внимание:")
     asyncio.create_task(delete_later(cb.message.chat.id, cb.message.message_id))
 
-# ========= TEXT =========
+# ====== TEXT ======
 @dp.message(ReportFSM.text)
 async def input_text(msg: Message, state: FSMContext):
     data = await state.get_data()
     shift = data["shift"]
     date = datetime.now().strftime("%d.%m.%Y")
     user = mention_user(msg.from_user)
-
     header = "Эпизоды\\Jira" if shift in ("11-23", "20-08") else "Эпизоды"
 
     if data.get("type") == "dop_warn":
@@ -171,25 +165,27 @@ async def input_text(msg: Message, state: FSMContext):
     await msg.delete()
     await state.clear()
 
-# ========= RESTART =========
+# ====== RESTART ======
 @dp.message(F.text.regexp(r"^/restart(@\w+)?$"))
 async def restart(msg: Message):
     try:
         await msg.delete()
     except:
         pass
-
     await msg.answer("♻️ Перезапуск бота…", delete_after=1)
-    await asyncio.sleep(0.2)
+    # на Railway перезапуск контейнера вызывается RuntimeError
     raise RuntimeError("Manual restart")
 
-# ========= WEBHOOK =========
+# ====== WEBHOOK ======
 async def on_startup(bot: Bot):
     print("=== BOT COLD START ===")
     await bot.set_webhook(WEBHOOK_URL)
+    try:
+        await bot.send_message(REPORT_CHAT_ID, "🟢 Бот запущен / cold start")
+    except:
+        pass
 
 async def on_shutdown(bot: Bot):
-    print("=== BOT SHUTDOWN ===")
     await bot.session.close()
 
 async def handle_webhook(request: web.Request):
@@ -197,7 +193,7 @@ async def handle_webhook(request: web.Request):
     await dp.feed_raw_update(bot, data)
     return web.Response()
 
-# ========= RUN =========
+# ====== RUN ======
 async def main():
     await on_startup(bot)
     app = web.Application()
